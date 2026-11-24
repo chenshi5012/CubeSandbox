@@ -63,12 +63,18 @@ type SandboxLogEntry struct {
 // SandboxLogsRes is the response for POST /cube/sandbox/logs.
 type SandboxLogsRes struct {
 	*types.Res
+	// Logs is never nil: an empty result has to serialise as [] rather than
+	// null, because CubeAPI decodes it as Vec<T> and rejects null.
 	Logs       []SandboxLogEntry `json:"logs"`
 	NextCursor int64             `json:"nextCursor,omitempty"`
 	HasMore    bool              `json:"hasMore"`
 }
 
 var fastJSON = jsoniter.ConfigFastest
+
+// shimLogPath is the shim request log scanned by readShimLogs. It is a
+// variable so the path can be redirected; production uses the constant.
+var shimLogPath = defaultShimLogPath
 
 func handleSandboxLogsAction(c *gin.Context) {
 	rt := CubeLog.GetTraceInfo(c.Request.Context())
@@ -96,12 +102,13 @@ func handleSandboxLogsAction(c *gin.Context) {
 					RetMsg:  "sandboxID is required",
 				},
 			},
+			Logs: []SandboxLogEntry{},
 		})
 		return
 	}
 	if resolved, ret := sandbox.NormalizeSandboxIDParam(c.Request.Context(), req.SandboxID); ret != nil {
 		rt.RetCode = int64(ret.RetCode)
-		common.WriteAPI(c, &SandboxLogsRes{Res: &types.Res{Ret: ret}})
+		common.WriteAPI(c, &SandboxLogsRes{Res: &types.Res{Ret: ret}, Logs: []SandboxLogEntry{}})
 		return
 	} else {
 		req.SandboxID = resolved
@@ -126,6 +133,7 @@ func handleSandboxLogsAction(c *gin.Context) {
 					RetMsg:  err.Error(),
 				},
 			},
+			Logs: []SandboxLogEntry{},
 		})
 		return
 	}
@@ -145,13 +153,15 @@ func handleSandboxLogsAction(c *gin.Context) {
 // cursor is a Unix millisecond timestamp; entries with Timestamp <= cursor are skipped.
 // Returns at most limit entries, plus a nextCursor and hasMore flag for pagination.
 func readShimLogs(sandboxID string, cursor int64, limit int) ([]SandboxLogEntry, int64, bool, error) {
-	f, err := os.Open(defaultShimLogPath)
+	f, err := os.Open(shimLogPath)
 	if err != nil {
 		return nil, 0, false, err
 	}
 	defer f.Close()
 
-	var entries []SandboxLogEntry
+	// Start from an empty, non-nil slice: no matching entries has to encode as
+	// [] instead of null (see SandboxLogsRes.Logs).
+	entries := []SandboxLogEntry{}
 	var nextCursor int64
 	hasMore := false
 

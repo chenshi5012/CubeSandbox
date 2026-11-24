@@ -1809,8 +1809,21 @@ pub struct SandboxLogsRequest {
 #[derive(Debug, Deserialize)]
 pub struct SandboxLogsResponse {
     pub ret: RetCode,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub logs: Vec<SandboxLogLine>,
+}
+
+/// CubeMaster serialises a sandbox without log entries as `logs: null` rather
+/// than `logs: []`, and a bare `#[serde(default)]` only covers a *missing*
+/// field. Decoding an explicit null to the type default keeps "no logs yet" a
+/// 200 with an empty list instead of failing the whole response with
+/// `invalid type: null, expected a sequence`.
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Deserialize)]
